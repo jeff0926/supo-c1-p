@@ -1,4 +1,3 @@
-import { useActiveClip } from "../contexts/ActiveClipContext";
 import { useClipSelection } from "../contexts/ClipSelectionContext";
 import type { Clip, Variant } from "../types";
 import { ClipPreview } from "./ClipPreview";
@@ -46,7 +45,6 @@ function VariantRow({ variant }: { variant: Variant }): JSX.Element {
 }
 
 export function ClipGrid({ clips }: ClipGridProps): JSX.Element {
-  const { activeClipId } = useActiveClip();
   const { isSelected, toggle } = useClipSelection();
 
   if (clips.length === 0) {
@@ -56,17 +54,13 @@ export function ClipGrid({ clips }: ClipGridProps): JSX.Element {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       {clips.map((clip) => {
-        const isActive = activeClipId === clip.id;
         const selected = isSelected(clip.id);
-        const borderClass = isActive
-          ? "border-emerald-400 shadow-[0_0_0_2px_rgba(52,211,153,0.45)]"
-          : selected
-            ? "border-accent"
-            : "border-slate-800";
+        const baseBorder = selected ? "border-accent" : "border-slate-800";
         return (
           <div
             key={clip.id}
-            className={`rounded-md border bg-slate-950 p-3 flex flex-col transition-colors ${borderClass}`}
+            tabIndex={0}
+            className={`group rounded-md border bg-slate-950 p-3 flex flex-col transition-colors outline-none focus:border-emerald-400 focus:shadow-[0_0_0_2px_rgba(52,211,153,0.45)] focus-within:border-emerald-400 focus-within:shadow-[0_0_0_2px_rgba(52,211,153,0.45)] hover:border-emerald-400/60 ${baseBorder}`}
           >
             <div className="flex items-start gap-2 mb-2">
               <input

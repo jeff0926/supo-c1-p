@@ -49,6 +49,13 @@ export function ClipPreview({ clip }: ClipPreviewProps): JSX.Element {
       >
         Download MP4
       </a>
+      <a
+        href={`/api/clips/${clip.id}/transcript`}
+        download
+        className="block text-center text-xs font-semibold py-1.5 rounded bg-slate-700 text-slate-100 hover:bg-slate-600"
+      >
+        Download transcript
+      </a>
     </div>
   );
 }

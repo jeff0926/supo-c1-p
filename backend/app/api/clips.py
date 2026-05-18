@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -57,6 +58,38 @@ def download_clip(clip_id: int, db: Session = Depends(get_db)) -> FileResponse:
         path,
         media_type="video/mp4",
         filename=f"{clip.title[:60].replace(' ', '_')}_{clip.id}.mp4",
+    )
+
+
+@clips_router.get("/{clip_id}/transcript")
+def download_clip_transcript(clip_id: int, db: Session = Depends(get_db)) -> JSONResponse:
+    """Return the slice of the parent job's transcript covering this clip."""
+    clip = db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(404, "Clip not found")
+    transcript_path = clip.job.transcript_path
+    if not transcript_path or not Path(transcript_path).exists():
+        raise HTTPException(404, "Transcript not available for this clip")
+
+    full = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+    words_in_range = [
+        w for w in full.get("words", [])
+        if w["end"] > clip.start_time and w["start"] < clip.end_time
+    ]
+    payload = {
+        "clip_id": clip.id,
+        "title": clip.title,
+        "start_time": clip.start_time,
+        "end_time": clip.end_time,
+        "text": " ".join(w["word"] for w in words_in_range).strip(),
+        "words": words_in_range,
+    }
+    safe_title = clip.title[:50].replace(" ", "_").replace("/", "_")
+    return JSONResponse(
+        content=payload,
+        headers={
+            "Content-Disposition": f'attachment; filename="transcript_{safe_title}_{clip.id}.json"'
+        },
     )
 
 
