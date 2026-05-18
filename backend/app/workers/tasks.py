@@ -35,8 +35,16 @@ def _set_status(job_id: int, status: JobStatus, error: str | None = None) -> Non
 
 
 @celery_app.task(name="omniclip.process_video")
-def process_video(job_id: int, use_llm: bool = True) -> dict:
-    logger.info("Starting pipeline for job %d (use_llm=%s)", job_id, use_llm)
+def process_video(
+    job_id: int,
+    use_llm: bool = True,
+    keyword_focus: str | None = None,
+    target_length: str = "auto",
+) -> dict:
+    logger.info(
+        "Starting pipeline for job %d (use_llm=%s, keyword=%r, target_length=%s)",
+        job_id, use_llm, keyword_focus, target_length,
+    )
     work_dir = _job_dir(job_id)
 
     with SessionLocal() as db:
@@ -62,7 +70,12 @@ def process_video(job_id: int, use_llm: bool = True) -> dict:
 
         # Subsystem 3: curation
         _set_status(job_id, JobStatus.CURATING)
-        candidates = curation.curate(transcript, use_llm=use_llm)
+        candidates = curation.curate(
+            transcript,
+            use_llm=use_llm,
+            keyword_focus=keyword_focus,
+            target_length=target_length,
+        )
         logger.info("Curated %d clip candidates for job %d", len(candidates), job_id)
 
         clip_ids: list[int] = []

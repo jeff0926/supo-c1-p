@@ -26,6 +26,8 @@ ALLOWED_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 async def upload_video(
     file: UploadFile = File(...),
     use_llm: bool = Form(True),
+    keyword_focus: str | None = Form(None),
+    target_length: str = Form("auto"),
     db: Session = Depends(get_db),
 ) -> JobOut:
     suffix = Path(file.filename or "").suffix.lower()
@@ -65,7 +67,7 @@ async def upload_video(
     db.commit()
     db.refresh(job)
 
-    process_video.delay(job.id, use_llm)
+    process_video.delay(job.id, use_llm, keyword_focus, target_length)
     return JobOut.model_validate(job)
 
 

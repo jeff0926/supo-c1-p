@@ -6,6 +6,7 @@ interface MasterPlayerContextValue {
   registerVideo: (el: HTMLVideoElement | null) => void;
   play: (src: string, seekSeconds: number) => void;
   seek: (seekSeconds: number) => void;
+  clear: () => void;
 }
 
 const MasterPlayerContext = createContext<MasterPlayerContextValue | null>(null);
@@ -57,9 +58,20 @@ export function MasterPlayerProvider({ children }: ProviderProps): JSX.Element {
     [currentSrc, seek],
   );
 
+  const clear = useCallback((): void => {
+    const v = videoRef.current;
+    if (v) {
+      v.pause();
+      v.removeAttribute("src");
+      v.load();
+    }
+    pendingSeekRef.current = null;
+    setCurrentSrc(null);
+  }, []);
+
   const value = useMemo(
-    () => ({ currentSrc, registerVideo, play, seek }),
-    [currentSrc, registerVideo, play, seek],
+    () => ({ currentSrc, registerVideo, play, seek, clear }),
+    [currentSrc, registerVideo, play, seek, clear],
   );
 
   return <MasterPlayerContext.Provider value={value}>{children}</MasterPlayerContext.Provider>;

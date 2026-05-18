@@ -33,6 +33,8 @@ class CurationResult(BaseModel):
 class VideoCreate(BaseModel):
     """Payload accepted when initiating a video upload."""
     use_llm: bool = True
+    keyword_focus: str | None = None
+    target_length: str = "auto"  # "auto" | "under_30" | "30_to_60"
 
 
 class TemplateInfo(BaseModel):

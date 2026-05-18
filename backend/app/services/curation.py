@@ -45,6 +45,14 @@ Respond with strict JSON only — no prose, no markdown fences — matching this
 If no clips meet the bar, return {"clips": []}."""
 
 
+# Length presets in seconds. None means no upper/lower bound.
+_LENGTH_BOUNDS: dict[str, tuple[float | None, float | None]] = {
+    "auto": (None, None),
+    "under_30": (None, 29.9),
+    "30_to_60": (30.0, 60.0),
+}
+
+
 class CurationError(RuntimeError):
     pass
 
@@ -97,24 +105,47 @@ def _parse_response(text: str) -> CurationResult:
     return CurationResult.model_validate(data)
 
 
-def curate(transcript: Transcript, use_llm: bool = True) -> list[ClipCandidate]:
+def curate(
+    transcript: Transcript,
+    use_llm: bool = True,
+    keyword_focus: str | None = None,
+    target_length: str = "auto",
+) -> list[ClipCandidate]:
     """Pick clip candidates from a transcript.
 
     When `use_llm` is True (default), uses Claude for semantic curation.
     When False, falls back to a deterministic pause-based segmenter — useful for
     local development without API calls.
+
+    `keyword_focus` restricts the output to clips containing that word
+    (case-insensitive). `target_length` enforces hard time-bound rules; see
+    `_LENGTH_BOUNDS` for the presets.
     """
+    keyword = (keyword_focus or "").strip().lower() or None
+
     if not use_llm:
         logger.info("LLM disabled; using deterministic pause-based curation")
-        return deterministic_segmentation(transcript)
+        clips = deterministic_segmentation(transcript)
+    else:
+        if not settings.anthropic_api_key:
+            raise CurationError("ANTHROPIC_API_KEY is not configured")
 
-    if not settings.anthropic_api_key:
-        raise CurationError("ANTHROPIC_API_KEY is not configured")
+        from anthropic import Anthropic
 
-    from anthropic import Anthropic
+        client = Anthropic(api_key=settings.anthropic_api_key)
+        clips = _llm_curate(client, transcript, keyword)
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
+    clips = _enforce_length(clips, target_length, transcript)
+    if keyword is not None:
+        clips = _filter_by_keyword(clips, transcript, keyword)
+    return _dedupe_overlapping(clips)
 
+
+def _llm_curate(
+    client,
+    transcript: Transcript,
+    keyword: str | None,
+) -> list[ClipCandidate]:
     chunks = _chunk_words(
         transcript.words,
         chunk_seconds=settings.chunk_seconds,
@@ -122,13 +153,20 @@ def curate(transcript: Transcript, use_llm: bool = True) -> list[ClipCandidate]:
     )
     logger.info("Curating %d transcript chunks", len(chunks))
 
+    extra_system = (
+        f"\n\nThe user wants clips that explicitly discuss '{keyword}'. "
+        "Prioritize segments containing this term; skip blocks that don't mention it."
+        if keyword
+        else ""
+    )
+
     all_clips: list[ClipCandidate] = []
     for idx, chunk in enumerate(chunks):
         try:
             response = client.messages.create(
                 model=settings.claude_model,
                 max_tokens=2048,
-                system=SYSTEM_PROMPT,
+                system=SYSTEM_PROMPT + extra_system,
                 messages=[{"role": "user", "content": _chunk_to_prompt(chunk)}],
             )
         except Exception as exc:
@@ -151,8 +189,60 @@ def curate(transcript: Transcript, use_llm: bool = True) -> list[ClipCandidate]:
                 )
                 continue
             all_clips.append(clip)
+    return all_clips
 
-    return _dedupe_overlapping(all_clips)
+
+def _enforce_length(
+    clips: list[ClipCandidate],
+    target_length: str,
+    transcript: Transcript,
+) -> list[ClipCandidate]:
+    """Apply hard length bounds. Truncates over-long clips at word boundaries;
+    drops clips that fall below the minimum length."""
+    min_s, max_s = _LENGTH_BOUNDS.get(target_length, (None, None))
+    if min_s is None and max_s is None:
+        return clips
+
+    out: list[ClipCandidate] = []
+    for clip in clips:
+        duration = clip.end_time - clip.start_time
+        if max_s is not None and duration > max_s:
+            new_end = _snap_to_word_boundary(
+                transcript.words, clip.start_time + max_s, "end"
+            )
+            if new_end <= clip.start_time:
+                continue
+            clip.end_time = new_end
+            duration = clip.end_time - clip.start_time
+        if min_s is not None and duration < min_s:
+            logger.info(
+                "Dropping clip below %.1fs minimum (%.2fs): %s",
+                min_s, duration, clip.title,
+            )
+            continue
+        out.append(clip)
+    return out
+
+
+def _filter_by_keyword(
+    clips: list[ClipCandidate],
+    transcript: Transcript,
+    keyword: str,
+) -> list[ClipCandidate]:
+    """Drop clips whose word range doesn't contain the keyword."""
+    kept: list[ClipCandidate] = []
+    for clip in clips:
+        words_in_range = [
+            w.word.lower()
+            for w in transcript.words
+            if w.end > clip.start_time and w.start < clip.end_time
+        ]
+        text = " ".join(words_in_range)
+        if keyword in text:
+            kept.append(clip)
+        else:
+            logger.info("Dropping clip without keyword '%s': %s", keyword, clip.title)
+    return kept
 
 
 def deterministic_segmentation(
