@@ -36,6 +36,10 @@ services:
     command: npm run dev -- --host 0.0.0.0
     ports:
       - "5173:5173"
+    environment:
+      VITE_API_TARGET: http://backend:8000
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    depends_on:
+      - backend
