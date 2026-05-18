@@ -27,6 +27,7 @@ export interface Job {
   error_message: string | null;
   created_at: string;
   updated_at: string;
+  has_transcript: boolean;
   clips: Clip[];
 }
 

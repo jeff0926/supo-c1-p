@@ -61,4 +61,5 @@ class JobOut(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+    has_transcript: bool = False
     clips: list[ClipOut] = []

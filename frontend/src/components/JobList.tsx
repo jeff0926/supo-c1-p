@@ -42,18 +42,29 @@ export function JobList({ jobs }: JobListProps): JSX.Element {
     <div className="space-y-4">
       {jobs.map((job) => (
         <div key={job.id} className="rounded-lg border border-slate-800 bg-slate-900 p-5">
-          <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
             <div>
               <h3 className="font-semibold">Job #{job.id}</h3>
               <p className="text-xs text-slate-500">
                 Created {new Date(job.created_at).toLocaleString()}
               </p>
             </div>
-            <span
-              className={`px-3 py-1 rounded-full text-xs font-semibold ${STATUS_COLOR[job.status]}`}
-            >
-              {STATUS_LABEL[job.status]}
-            </span>
+            <div className="flex items-center gap-2">
+              {job.has_transcript && (
+                <a
+                  href={`/api/jobs/${job.id}/transcript`}
+                  download
+                  className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-700 text-slate-100 hover:bg-slate-600"
+                >
+                  Download transcript
+                </a>
+              )}
+              <span
+                className={`px-3 py-1 rounded-full text-xs font-semibold ${STATUS_COLOR[job.status]}`}
+              >
+                {STATUS_LABEL[job.status]}
+              </span>
+            </div>
           </div>
           {job.error_message && (
             <p className="text-sm text-red-400 mb-3">{job.error_message}</p>
