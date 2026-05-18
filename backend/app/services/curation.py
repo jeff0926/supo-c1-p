@@ -16,13 +16,19 @@ logger = logging.getLogger(__name__)
 
 
 SYSTEM_PROMPT = """You are a viral short-form video curator. Examine the provided
-transcription block. Pinpoint self-contained viral clip candidates that contain:
-  1. A compelling initial hook within the first 3 seconds.
-  2. A substantive core point.
-  3. A clean contextual exit (no mid-sentence cuts).
+transcription block and pinpoint the most engaging clip candidates.
 
-Each clip should be 15-90 seconds long. Ensure chosen timestamps align exactly with
-the word boundaries provided.
+Each clip must:
+  1. Open with a compelling hook (intriguing claim, question, or stat).
+  2. Contain a substantive core point or insight.
+  3. End on a clean sentence boundary (no mid-sentence cuts).
+
+Target length: 8-90 seconds. Shorter is fine if the segment is self-contained.
+If the transcript is short, return at least one clip covering the strongest portion
+of the whole transcript rather than returning an empty list — unless the audio
+contains no intelligible speech at all.
+
+Ensure chosen timestamps align exactly with the word boundaries provided.
 
 Respond with strict JSON only — no prose, no markdown fences — matching this shape:
 {
@@ -123,10 +129,16 @@ def curate(transcript: Transcript) -> list[ClipCandidate]:
             block.text for block in response.content if getattr(block, "type", "") == "text"
         )
         result = _parse_response(body)
+        if not result.clips:
+            logger.info("Claude returned 0 clips for chunk %d. Raw response: %s", idx, body[:500])
         for clip in result.clips:
             clip.start_time = _snap_to_word_boundary(transcript.words, clip.start_time, "start")
             clip.end_time = _snap_to_word_boundary(transcript.words, clip.end_time, "end")
             if clip.end_time <= clip.start_time:
+                logger.warning(
+                    "Dropping clip after word-boundary snap (start=%.2f end=%.2f title=%s)",
+                    clip.start_time, clip.end_time, clip.title,
+                )
                 continue
             all_clips.append(clip)
 
