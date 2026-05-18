@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,13 +8,32 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Clip
-from app.schemas import ClipOut
+from app.models import Clip, Variant, VariantStatus
+from app.schemas import (
+    BatchRenderRequest,
+    BatchRenderResponse,
+    ClipOut,
+    TemplateInfo,
+    VariantOut,
+)
+from app.services.publishing import TemplateEngine
+from app.workers.tasks import render_variants_task
 
-router = APIRouter(prefix="/clips", tags=["clips"])
+router = APIRouter(tags=["clips"])
+
+clips_router = APIRouter(prefix="/clips")
+templates_router = APIRouter(prefix="/templates")
+variants_router = APIRouter(prefix="/variants")
 
 
-@router.get("/{clip_id}", response_model=ClipOut)
+def _variant_to_out(variant: Variant) -> VariantOut:
+    out = VariantOut.model_validate(variant)
+    if variant.output_path:
+        out.output_url = f"/api/variants/{variant.id}/download"
+    return out
+
+
+@clips_router.get("/{clip_id}", response_model=ClipOut)
 def get_clip(clip_id: int, db: Session = Depends(get_db)) -> ClipOut:
     clip = db.get(Clip, clip_id)
     if clip is None:
@@ -21,10 +41,11 @@ def get_clip(clip_id: int, db: Session = Depends(get_db)) -> ClipOut:
     out = ClipOut.model_validate(clip)
     if clip.rendered and clip.output_path:
         out.output_url = f"/api/clips/{clip.id}/download"
+    out.variants = [_variant_to_out(v) for v in clip.variants]
     return out
 
 
-@router.get("/{clip_id}/download")
+@clips_router.get("/{clip_id}/download")
 def download_clip(clip_id: int, db: Session = Depends(get_db)) -> FileResponse:
     clip = db.get(Clip, clip_id)
     if clip is None or not clip.output_path:
@@ -37,3 +58,72 @@ def download_clip(clip_id: int, db: Session = Depends(get_db)) -> FileResponse:
         media_type="video/mp4",
         filename=f"{clip.title[:60].replace(' ', '_')}_{clip.id}.mp4",
     )
+
+
+@clips_router.post("/batch-render", response_model=BatchRenderResponse, status_code=202)
+def batch_render(
+    payload: BatchRenderRequest,
+    db: Session = Depends(get_db),
+) -> BatchRenderResponse:
+    """Enqueue a variant render for every (clip_id, template_id) combination."""
+    for tid in payload.template_ids:
+        TemplateEngine.get(tid)  # validates; raises PublishingError if unknown
+
+    clips = db.query(Clip).filter(Clip.id.in_(payload.clip_ids)).all()
+    if len(clips) != len(set(payload.clip_ids)):
+        raise HTTPException(404, "One or more clips not found")
+
+    new_ids: list[int] = []
+    for clip in clips:
+        for tid in payload.template_ids:
+            variant = Variant(
+                clip_id=clip.id,
+                template_id=tid,
+                status=VariantStatus.PENDING,
+                variant_uuid=str(uuid.uuid4()),
+            )
+            db.add(variant)
+            db.flush()
+            new_ids.append(variant.id)
+    db.commit()
+
+    for vid in new_ids:
+        render_variants_task.delay(vid)
+
+    return BatchRenderResponse(variant_ids=new_ids)
+
+
+@templates_router.get("", response_model=list[TemplateInfo])
+def list_templates() -> list[TemplateInfo]:
+    return [
+        TemplateInfo(id=t.id, name=t.name, description=t.description)
+        for t in TemplateEngine.list_templates()
+    ]
+
+
+@variants_router.get("/{variant_id}", response_model=VariantOut)
+def get_variant(variant_id: int, db: Session = Depends(get_db)) -> VariantOut:
+    variant = db.get(Variant, variant_id)
+    if variant is None:
+        raise HTTPException(404, "Variant not found")
+    return _variant_to_out(variant)
+
+
+@variants_router.get("/{variant_id}/download")
+def download_variant(variant_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    variant = db.get(Variant, variant_id)
+    if variant is None or not variant.output_path:
+        raise HTTPException(404, "Variant not rendered yet")
+    path = Path(variant.output_path)
+    if not path.exists():
+        raise HTTPException(404, "Variant file missing on disk")
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"variant_{variant.template_id}_{variant.id}.mp4",
+    )
+
+
+router.include_router(clips_router)
+router.include_router(templates_router)
+router.include_router(variants_router)

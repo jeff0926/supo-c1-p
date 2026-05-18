@@ -13,10 +13,19 @@ from app.schemas import ClipOut, JobOut
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
+def _variant_to_out(variant):
+    from app.schemas import VariantOut
+    out = VariantOut.model_validate(variant)
+    if variant.output_path:
+        out.output_url = f"/api/variants/{variant.id}/download"
+    return out
+
+
 def _clip_to_out(clip) -> ClipOut:
     out = ClipOut.model_validate(clip)
     if clip.rendered and clip.output_path:
         out.output_url = f"/api/clips/{clip.id}/download"
+    out.variants = [_variant_to_out(v) for v in clip.variants]
     return out
 
 

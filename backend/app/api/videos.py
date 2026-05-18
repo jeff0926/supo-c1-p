@@ -5,7 +5,7 @@ import shutil
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -24,6 +24,7 @@ ALLOWED_SUFFIXES = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 @router.post("", response_model=JobOut, status_code=201)
 async def upload_video(
     file: UploadFile = File(...),
+    use_llm: bool = Form(True),
     db: Session = Depends(get_db),
 ) -> JobOut:
     suffix = Path(file.filename or "").suffix.lower()
@@ -63,7 +64,7 @@ async def upload_video(
     db.commit()
     db.refresh(job)
 
-    process_video.delay(job.id)
+    process_video.delay(job.id, use_llm)
     return JobOut.model_validate(job)
 
 

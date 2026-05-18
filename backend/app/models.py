@@ -65,3 +65,29 @@ class Clip(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     job: Mapped[Job] = relationship(back_populates="clips")
+    variants: Mapped[list["Variant"]] = relationship(
+        back_populates="clip", cascade="all, delete-orphan"
+    )
+
+
+class VariantStatus(str, enum.Enum):
+    PENDING = "pending"
+    RENDERING = "rendering"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class Variant(Base):
+    __tablename__ = "variants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    clip_id: Mapped[int] = mapped_column(ForeignKey("clips.id"))
+    template_id: Mapped[str] = mapped_column(String(64))
+    status: Mapped[VariantStatus] = mapped_column(Enum(VariantStatus), default=VariantStatus.PENDING)
+    output_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    output_md5: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    variant_uuid: Mapped[str] = mapped_column(String(36))
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    clip: Mapped[Clip] = relationship(back_populates="variants")

@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models import JobStatus
+from app.models import JobStatus, VariantStatus
 
 
 class WordTimestamp(BaseModel):
@@ -30,6 +30,39 @@ class CurationResult(BaseModel):
     clips: list[ClipCandidate]
 
 
+class VideoCreate(BaseModel):
+    """Payload accepted when initiating a video upload."""
+    use_llm: bool = True
+
+
+class TemplateInfo(BaseModel):
+    id: str
+    name: str
+    description: str
+
+
+class VariantOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    clip_id: int
+    template_id: str
+    status: VariantStatus
+    output_md5: str | None = None
+    output_url: str | None = None
+    error_message: str | None = None
+    created_at: datetime
+
+
+class BatchRenderRequest(BaseModel):
+    clip_ids: list[int] = Field(min_length=1)
+    template_ids: list[str] = Field(min_length=1)
+
+
+class BatchRenderResponse(BaseModel):
+    variant_ids: list[int]
+
+
 class VideoOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -50,6 +83,7 @@ class ClipOut(BaseModel):
     reasoning: str
     rendered: bool
     output_url: str | None = None
+    variants: list[VariantOut] = []
 
 
 class JobOut(BaseModel):

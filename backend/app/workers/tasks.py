@@ -9,8 +9,9 @@ from pathlib import Path
 
 from app.config import settings
 from app.database import SessionLocal
-from app.models import Clip, Job, JobStatus
+from app.models import Clip, Job, JobStatus, Variant, VariantStatus
 from app.services import captioning, curation, ingestion, reframing, rendering, transcription
+from app.services.publishing import TemplateEngine, VariantRenderer
 from app.workers.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -34,8 +35,8 @@ def _set_status(job_id: int, status: JobStatus, error: str | None = None) -> Non
 
 
 @celery_app.task(name="omniclip.process_video")
-def process_video(job_id: int) -> dict:
-    logger.info("Starting pipeline for job %d", job_id)
+def process_video(job_id: int, use_llm: bool = True) -> dict:
+    logger.info("Starting pipeline for job %d (use_llm=%s)", job_id, use_llm)
     work_dir = _job_dir(job_id)
 
     with SessionLocal() as db:
@@ -61,7 +62,7 @@ def process_video(job_id: int) -> dict:
 
         # Subsystem 3: curation
         _set_status(job_id, JobStatus.CURATING)
-        candidates = curation.curate(transcript)
+        candidates = curation.curate(transcript, use_llm=use_llm)
         logger.info("Curated %d clip candidates for job %d", len(candidates), job_id)
 
         clip_ids: list[int] = []
@@ -111,4 +112,71 @@ def process_video(job_id: int) -> dict:
     except Exception as exc:
         logger.exception("Pipeline failed for job %d", job_id)
         _set_status(job_id, JobStatus.FAILED, error=str(exc))
+        raise
+
+
+@celery_app.task(name="omniclip.render_variants")
+def render_variants_task(variant_id: int) -> dict:
+    """Render a single variant: re-runs reframing + applies the template."""
+    logger.info("Starting variant render %d", variant_id)
+
+    with SessionLocal() as db:
+        variant = db.get(Variant, variant_id)
+        if variant is None:
+            raise RuntimeError(f"Variant {variant_id} not found")
+        clip = variant.clip
+        job = clip.job
+        source_path = Path(job.video.source_path)
+        transcript_path_str = job.transcript_path
+        clip_id = clip.id
+        job_id = job.id
+        start, end = clip.start_time, clip.end_time
+        template_id = variant.template_id
+
+        variant.status = VariantStatus.RENDERING
+        db.commit()
+
+    try:
+        template = TemplateEngine.get(template_id)
+
+        # Subsystem 4 re-run: per-variant cropping (template may apply offset)
+        crop_track = reframing.compute_crop_track(source_path, start, end)
+
+        # Reload transcript words from disk if available, otherwise re-transcribe
+        if transcript_path_str and Path(transcript_path_str).exists():
+            transcript = transcription.load_transcript(Path(transcript_path_str))
+        else:
+            audio_path = _job_dir(job_id) / "audio.wav"
+            if not audio_path.exists():
+                ingestion.extract_audio(source_path, audio_path)
+            transcript = transcription.transcribe(audio_path)
+
+        output_path, variant_uuid, md5 = VariantRenderer.render(
+            source_video=source_path,
+            crop_track=crop_track,
+            words=transcript.words,
+            clip_id=clip_id,
+            job_id=job_id,
+            start_time=start,
+            end_time=end,
+            template=template,
+        )
+
+        with SessionLocal() as db:
+            variant = db.get(Variant, variant_id)
+            variant.output_path = str(output_path)
+            variant.variant_uuid = variant_uuid
+            variant.output_md5 = md5
+            variant.status = VariantStatus.COMPLETED
+            db.commit()
+        logger.info("Variant %d rendered (md5=%s)", variant_id, md5)
+        return {"variant_id": variant_id, "md5": md5}
+
+    except Exception as exc:
+        logger.exception("Variant render failed for %d", variant_id)
+        with SessionLocal() as db:
+            variant = db.get(Variant, variant_id)
+            variant.status = VariantStatus.FAILED
+            variant.error_message = str(exc)
+            db.commit()
         raise

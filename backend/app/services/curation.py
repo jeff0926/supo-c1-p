@@ -97,7 +97,17 @@ def _parse_response(text: str) -> CurationResult:
     return CurationResult.model_validate(data)
 
 
-def curate(transcript: Transcript) -> list[ClipCandidate]:
+def curate(transcript: Transcript, use_llm: bool = True) -> list[ClipCandidate]:
+    """Pick clip candidates from a transcript.
+
+    When `use_llm` is True (default), uses Claude for semantic curation.
+    When False, falls back to a deterministic pause-based segmenter — useful for
+    local development without API calls.
+    """
+    if not use_llm:
+        logger.info("LLM disabled; using deterministic pause-based curation")
+        return deterministic_segmentation(transcript)
+
     if not settings.anthropic_api_key:
         raise CurationError("ANTHROPIC_API_KEY is not configured")
 
@@ -143,6 +153,67 @@ def curate(transcript: Transcript) -> list[ClipCandidate]:
             all_clips.append(clip)
 
     return _dedupe_overlapping(all_clips)
+
+
+def deterministic_segmentation(
+    transcript: Transcript,
+    target_seconds: float = 45.0,
+    pause_threshold: float = 0.8,
+    min_seconds: float = 8.0,
+) -> list[ClipCandidate]:
+    """Pure-Python clip detector — no LLM required.
+
+    Walks the word-level transcript and starts a new clip whenever the gap
+    between consecutive words exceeds `pause_threshold`. Clips are merged
+    until they reach roughly `target_seconds` so we don't emit hundreds of
+    micro-fragments. Used when `use_llm=False`.
+    """
+    if not transcript.words:
+        return []
+
+    words = transcript.words
+    candidates: list[ClipCandidate] = []
+    current_start = words[0].start
+    current_text: list[str] = [words[0].word]
+    current_end = words[0].end
+
+    for prev, nxt in zip(words, words[1:]):
+        gap = nxt.start - prev.end
+        elapsed = prev.end - current_start
+        is_natural_break = gap > pause_threshold
+        is_long_enough = elapsed >= target_seconds
+
+        if is_natural_break and elapsed >= min_seconds:
+            candidates.append(_make_candidate(current_start, prev.end, current_text))
+            current_start = nxt.start
+            current_text = [nxt.word]
+            current_end = nxt.end
+        elif is_long_enough and is_natural_break:
+            candidates.append(_make_candidate(current_start, prev.end, current_text))
+            current_start = nxt.start
+            current_text = [nxt.word]
+            current_end = nxt.end
+        else:
+            current_text.append(nxt.word)
+            current_end = nxt.end
+
+    if current_end - current_start >= min_seconds:
+        candidates.append(_make_candidate(current_start, current_end, current_text))
+
+    logger.info("Deterministic segmenter produced %d candidates", len(candidates))
+    return candidates
+
+
+def _make_candidate(start: float, end: float, words: list[str]) -> ClipCandidate:
+    text = " ".join(words).strip()
+    title = (text[:60] + "…") if len(text) > 60 else text
+    return ClipCandidate(
+        title=title or f"Segment {start:.1f}-{end:.1f}",
+        start_time=float(start),
+        end_time=float(end),
+        virality_score=50,
+        reasoning="Deterministic pause-based segmentation (LLM curation disabled).",
+    )
 
 
 def _dedupe_overlapping(clips: list[ClipCandidate]) -> list[ClipCandidate]:
