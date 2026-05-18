@@ -46,8 +46,20 @@ class Template:
     alignment: int               # ASS alignment code (1-9)
     margin_v: int                # vertical margin from edge
     caption_y: int               # absolute Y for \pos override
+    # Approximate per-character width as a fraction of font_size. Heavy/black
+    # weights run ~0.65; narrow weights like Impact ~0.50; regular sans ~0.55.
+    char_width_ratio: float = 0.58
     crop_offset_ratio: float = 0.0  # shift crop horizontally by this fraction of width
     extra_video_filters: tuple[str, ...] = field(default_factory=tuple)
+
+
+SIDE_MARGIN_PX = 40
+
+
+def _max_chars_for_template(template: Template) -> int:
+    usable = settings.output_width - 2 * SIDE_MARGIN_PX
+    avg_char_px = template.font_size * template.char_width_ratio
+    return max(6, int(usable / avg_char_px))
 
 
 class TemplateEngine:
@@ -67,6 +79,7 @@ class TemplateEngine:
             alignment=5,
             margin_v=0,
             caption_y=1400,
+            char_width_ratio=0.62,
         ),
         "kinetic_neon": Template(
             id="kinetic_neon",
@@ -81,6 +94,7 @@ class TemplateEngine:
             alignment=5,
             margin_v=0,
             caption_y=960,
+            char_width_ratio=0.48,
         ),
         "kinetic_minimal": Template(
             id="kinetic_minimal",
@@ -95,6 +109,7 @@ class TemplateEngine:
             alignment=5,
             margin_v=0,
             caption_y=300,
+            char_width_ratio=0.55,
         ),
         "kinetic_bold": Template(
             id="kinetic_bold",
@@ -109,6 +124,7 @@ class TemplateEngine:
             alignment=5,
             margin_v=0,
             caption_y=1500,
+            char_width_ratio=0.66,
             extra_video_filters=("unsharp=5:5:0.8:5:5:0.0",),
         ),
     }
@@ -134,7 +150,8 @@ def build_ass_for_template(
 ) -> Path:
     """Generate a per-template .ass file with the template's typography rules."""
     in_range = [w for w in words if w.end > clip_start and w.start < clip_end]
-    phrases = _group_phrases(in_range)
+    max_chars = _max_chars_for_template(template)
+    phrases = _group_phrases(in_range, max_chars=max_chars)
 
     header = (
         "[Script Info]\n"
@@ -142,10 +159,10 @@ def build_ass_for_template(
         f"PlayResX: {settings.output_width}\n"
         f"PlayResY: {settings.output_height}\n"
         "ScaledBorderAndShadow: yes\n"
-        "WrapStyle: 2\n\n"
+        "WrapStyle: 0\n\n"
         "[V4+ Styles]\n"
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Default,{template.font},{template.font_size},{template.primary_color},{template.primary_color},{template.outline_color},{template.outline_color},-1,0,0,0,100,100,0,0,1,{template.outline_width},0,{template.alignment},40,40,{template.margin_v},1\n\n"
+        f"Style: Default,{template.font},{template.font_size},{template.primary_color},{template.primary_color},{template.outline_color},{template.outline_color},-1,0,0,0,100,100,0,0,1,{template.outline_width},0,{template.alignment},{SIDE_MARGIN_PX},{SIDE_MARGIN_PX},{template.margin_v},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -161,7 +178,7 @@ def build_ass_for_template(
 
 def _group_phrases(
     words: list[WordTimestamp],
-    max_chars: int = 40,
+    max_chars: int,
     max_gap: float = 0.6,
 ) -> list[list[WordTimestamp]]:
     phrases: list[list[WordTimestamp]] = []

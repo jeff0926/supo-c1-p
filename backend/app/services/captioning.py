@@ -15,6 +15,17 @@ HIGHLIGHT_COLOR = "&H0000FFFF&"  # neon yellow (ASS BGR)
 DEFAULT_COLOR = "&H00FFFFFF&"    # white
 OUTLINE_COLOR = "&H00000000&"    # black
 
+DEFAULT_FONT_SIZE = 72
+DEFAULT_CHAR_WIDTH_RATIO = 0.62  # Montserrat Black is heavy/wide
+SIDE_MARGIN = 40                  # px of safe area on each side
+
+
+def _max_chars_for(font_size: int, char_width_ratio: float) -> int:
+    """How many characters fit on one line at the given font size."""
+    usable = settings.output_width - 2 * SIDE_MARGIN
+    avg_char_px = font_size * char_width_ratio
+    return max(6, int(usable / avg_char_px))
+
 
 def _format_time(seconds: float) -> str:
     seconds = max(0.0, seconds)
@@ -30,11 +41,11 @@ ScriptType: v4.00+
 PlayResX: {width}
 PlayResY: {height}
 ScaledBorderAndShadow: yes
-WrapStyle: 2
+WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Montserrat Black,72,{DEFAULT_COLOR},{DEFAULT_COLOR},{OUTLINE_COLOR},{OUTLINE_COLOR},-1,0,0,0,100,100,0,0,1,3,0,5,40,40,0,1
+Style: Default,Montserrat Black,{DEFAULT_FONT_SIZE},{DEFAULT_COLOR},{DEFAULT_COLOR},{OUTLINE_COLOR},{OUTLINE_COLOR},-1,0,0,0,100,100,0,0,1,3,0,5,{SIDE_MARGIN},{SIDE_MARGIN},0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -43,10 +54,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 def _group_into_phrases(
     words: list[WordTimestamp],
-    max_chars: int = 40,
+    max_chars: int | None = None,
     max_gap: float = 0.6,
 ) -> list[list[WordTimestamp]]:
     """Group words into short readable phrases the viewer can track."""
+    if max_chars is None:
+        max_chars = _max_chars_for(DEFAULT_FONT_SIZE, DEFAULT_CHAR_WIDTH_RATIO)
     phrases: list[list[WordTimestamp]] = []
     current: list[WordTimestamp] = []
     char_count = 0
