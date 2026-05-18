@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { trimClip } from "../api";
 import { useMasterPlayer } from "../contexts/MasterPlayerContext";
@@ -25,6 +25,20 @@ export function ClipScriptAccordion({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Mirror `mode` into a ref so the click handler always reads the latest
+  // value without needing to be re-created on every mode change. This
+  // eliminates the stale-closure path where a word button's onClick had
+  // captured the previous mode.
+  const modeRef = useRef<EditMode>(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  const sourceUrlRef = useRef<string | null>(sourceUrl);
+  useEffect(() => {
+    sourceUrlRef.current = sourceUrl;
+  }, [sourceUrl]);
+
   const effectiveStart = newStart ?? clip.start_time;
   const effectiveEnd = newEnd ?? clip.end_time;
   const isChanged = newStart !== null || newEnd !== null;
@@ -33,19 +47,23 @@ export function ClipScriptAccordion({
 
   const handleWordClick = useCallback(
     (wordStart: number, wordEnd: number): void => {
-      if (mode === "set_start") {
+      const currentMode = modeRef.current;
+      if (currentMode === "set_start") {
         setNewStart(wordStart);
-        if (newEnd !== null && wordStart >= newEnd) setNewEnd(null);
+        setNewEnd((prev) => (prev !== null && wordStart >= prev ? null : prev));
         setMode("seek");
-      } else if (mode === "set_end") {
-        setNewEnd(wordEnd);
-        if (newStart !== null && wordEnd <= newStart) setNewStart(null);
-        setMode("seek");
-      } else if (sourceUrl) {
-        play(sourceUrl, wordStart);
+        return;
       }
+      if (currentMode === "set_end") {
+        setNewEnd(wordEnd);
+        setNewStart((prev) => (prev !== null && wordEnd <= prev ? null : prev));
+        setMode("seek");
+        return;
+      }
+      const src = sourceUrlRef.current;
+      if (src) play(src, wordStart);
     },
-    [mode, newStart, newEnd, play, sourceUrl],
+    [play],
   );
 
   const handleApply = useCallback(async (): Promise<void> => {
@@ -63,8 +81,6 @@ export function ClipScriptAccordion({
       setSubmitting(false);
     }
   }, [canApply, clip.id, effectiveStart, effectiveEnd, onTrimmed]);
-
-  const wordRows = useMemo(() => clip.words, [clip.words]);
 
   return (
     <div className="mt-3 pt-2 border-t border-slate-800">
@@ -124,13 +140,13 @@ export function ClipScriptAccordion({
             {isChanged && <span className="text-amber-400">(modified)</span>}
           </div>
 
-          {wordRows.length === 0 ? (
+          {clip.words.length === 0 ? (
             <p className="text-xs text-slate-600 italic">
               No transcript words available for this clip yet.
             </p>
           ) : (
             <div className="max-h-48 overflow-y-auto rounded bg-slate-900 p-2 flex flex-wrap gap-1">
-              {wordRows.map((w, idx) => {
+              {clip.words.map((w, idx) => {
                 const isStart = newStart !== null && w.start === newStart;
                 const isEnd = newEnd !== null && w.end === newEnd;
                 const inNewRange =
@@ -149,7 +165,11 @@ export function ClipScriptAccordion({
                     key={`${w.start}-${idx}`}
                     type="button"
                     title={`${w.start.toFixed(2)}s — ${w.end.toFixed(2)}s`}
-                    onClick={() => handleWordClick(w.start, w.end)}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      handleWordClick(w.start, w.end);
+                    }}
                     className={className}
                   >
                     {w.word}
