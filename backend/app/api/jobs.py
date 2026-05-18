@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,9 +9,22 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Job
-from app.schemas import ClipOut, JobOut
+from app.schemas import ClipOut, JobOut, WordTimestamp
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+def _load_transcript_words(transcript_path: str | None) -> list[WordTimestamp]:
+    if not transcript_path:
+        return []
+    path = Path(transcript_path)
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [WordTimestamp(**w) for w in data.get("words", [])]
 
 
 def _variant_to_out(variant):
@@ -21,18 +35,22 @@ def _variant_to_out(variant):
     return out
 
 
-def _clip_to_out(clip) -> ClipOut:
+def _clip_to_out(clip, words: list[WordTimestamp]) -> ClipOut:
     out = ClipOut.model_validate(clip)
     if clip.rendered and clip.output_path:
         out.output_url = f"/api/clips/{clip.id}/download"
     out.variants = [_variant_to_out(v) for v in clip.variants]
+    out.words = [w for w in words if w.end > clip.start_time and w.start < clip.end_time]
     return out
 
 
 def _job_to_out(job: Job) -> JobOut:
     data = JobOut.model_validate(job)
-    data.clips = [_clip_to_out(c) for c in job.clips]
+    words = _load_transcript_words(job.transcript_path)
+    data.clips = [_clip_to_out(c, words) for c in job.clips]
     data.has_transcript = bool(job.transcript_path and Path(job.transcript_path).exists())
+    if job.video and job.video.source_path:
+        data.source_url = f"/api/videos/{job.video.id}/source"
     return data
 
 

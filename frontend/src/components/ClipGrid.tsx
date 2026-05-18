@@ -1,9 +1,12 @@
 import { useClipSelection } from "../contexts/ClipSelectionContext";
 import type { Clip, Variant } from "../types";
 import { ClipPreview } from "./ClipPreview";
+import { ClipScriptAccordion } from "./ClipScriptAccordion";
 
 interface ClipGridProps {
   clips: Clip[];
+  sourceUrl: string | null;
+  onTrimmed: () => void;
 }
 
 function formatTime(seconds: number): string {
@@ -44,7 +47,7 @@ function VariantRow({ variant }: { variant: Variant }): JSX.Element {
   );
 }
 
-export function ClipGrid({ clips }: ClipGridProps): JSX.Element {
+export function ClipGrid({ clips, sourceUrl, onTrimmed }: ClipGridProps): JSX.Element {
   const { isSelected, toggle } = useClipSelection();
 
   if (clips.length === 0) {
@@ -89,6 +92,11 @@ export function ClipGrid({ clips }: ClipGridProps): JSX.Element {
                 ))}
               </div>
             )}
+            <ClipScriptAccordion
+              clip={clip}
+              sourceUrl={sourceUrl}
+              onTrimmed={onTrimmed}
+            />
           </div>
         );
       })}

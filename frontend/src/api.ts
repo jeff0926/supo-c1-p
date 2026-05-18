@@ -1,4 +1,4 @@
-import type { BatchRenderResponse, Job, Template } from "./types";
+import type { BatchRenderResponse, Clip, Job, Template } from "./types";
 
 const BASE = "/api";
 
@@ -43,4 +43,17 @@ export async function batchRender(
     body: JSON.stringify({ clip_ids: clipIds, template_ids: templateIds }),
   });
   return handle<BatchRenderResponse>(res);
+}
+
+export async function trimClip(
+  clipId: number,
+  startTime: number,
+  endTime: number,
+): Promise<Clip> {
+  const res = await fetch(`${BASE}/clips/${clipId}/trim`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start_time: startTime, end_time: endTime }),
+  });
+  return handle<Clip>(res);
 }

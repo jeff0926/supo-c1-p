@@ -115,6 +115,57 @@ def process_video(job_id: int, use_llm: bool = True) -> dict:
         raise
 
 
+@celery_app.task(name="omniclip.rerender_clip")
+def rerender_clip_task(clip_id: int) -> dict:
+    """Re-run the per-clip portion of the pipeline after a trim.
+
+    Skips ingestion, transcription, and curation. Recomputes the crop track for
+    the new time range, rebuilds the .ass captions, and renders a fresh MP4.
+    """
+    logger.info("Re-rendering clip %d", clip_id)
+
+    with SessionLocal() as db:
+        clip = db.get(Clip, clip_id)
+        if clip is None:
+            raise RuntimeError(f"Clip {clip_id} not found")
+        job = clip.job
+        source_path = Path(job.video.source_path)
+        transcript_path_str = job.transcript_path
+        clip_id_val = clip.id
+        job_id = job.id
+        start, end = clip.start_time, clip.end_time
+
+    try:
+        work_dir = _job_dir(job_id)
+
+        if transcript_path_str and Path(transcript_path_str).exists():
+            transcript = transcription.load_transcript(Path(transcript_path_str))
+        else:
+            audio_path = work_dir / "audio.wav"
+            if not audio_path.exists():
+                ingestion.extract_audio(source_path, audio_path)
+            transcript = transcription.transcribe(audio_path)
+
+        crop_track = reframing.compute_crop_track(source_path, start, end)
+        sub_path = work_dir / f"clip_{clip_id_val}.ass"
+        captioning.build_ass(transcript.words, start, end, sub_path)
+
+        out_path = work_dir / f"clip_{clip_id_val}.mp4"
+        rendering.render_clip(source_path, crop_track, sub_path, start, end, out_path)
+
+        with SessionLocal() as db:
+            clip = db.get(Clip, clip_id_val)
+            clip.output_path = str(out_path)
+            clip.rendered = True
+            db.commit()
+        logger.info("Re-render complete for clip %d", clip_id_val)
+        return {"clip_id": clip_id_val, "status": "rerendered"}
+
+    except Exception as exc:
+        logger.exception("Re-render failed for clip %d", clip_id_val)
+        raise
+
+
 @celery_app.task(name="omniclip.render_variants")
 def render_variants_task(variant_id: int) -> dict:
     """Render a single variant: re-runs reframing + applies the template."""

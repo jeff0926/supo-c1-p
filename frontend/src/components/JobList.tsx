@@ -3,6 +3,7 @@ import { ClipGrid } from "./ClipGrid";
 
 interface JobListProps {
   jobs: Job[];
+  onChanged: () => void;
 }
 
 const STATUS_LABEL: Record<Job["status"], string> = {
@@ -29,7 +30,7 @@ const STATUS_COLOR: Record<Job["status"], string> = {
   failed: "bg-red-600 text-white",
 };
 
-export function JobList({ jobs }: JobListProps): JSX.Element {
+export function JobList({ jobs, onChanged }: JobListProps): JSX.Element {
   if (jobs.length === 0) {
     return (
       <div className="rounded-lg border border-slate-800 bg-slate-900 p-6 text-center text-slate-500">
@@ -69,7 +70,7 @@ export function JobList({ jobs }: JobListProps): JSX.Element {
           {job.error_message && (
             <p className="text-sm text-red-400 mb-3">{job.error_message}</p>
           )}
-          <ClipGrid clips={job.clips} />
+          <ClipGrid clips={job.clips} sourceUrl={job.source_url} onTrimmed={onChanged} />
         </div>
       ))}
     </div>

@@ -22,6 +22,12 @@ export interface Variant {
   created_at: string;
 }
 
+export interface WordTimestamp {
+  word: string;
+  start: number;
+  end: number;
+}
+
 export interface Clip {
   id: number;
   title: string;
@@ -31,6 +37,7 @@ export interface Clip {
   reasoning: string;
   rendered: boolean;
   output_url: string | null;
+  words: WordTimestamp[];
   variants: Variant[];
 }
 
@@ -42,6 +49,7 @@ export interface Job {
   created_at: string;
   updated_at: string;
   has_transcript: boolean;
+  source_url: string | null;
   clips: Clip[];
 }
 

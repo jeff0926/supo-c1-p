@@ -41,7 +41,12 @@ export function useJobs(): {
     const tick = async (): Promise<void> => {
       if (cancelled) return;
       await refresh();
-      const anyActive = jobs.some((j) => ACTIVE_STATES.has(j.status));
+      const anyActive = jobs.some(
+        (j) =>
+          ACTIVE_STATES.has(j.status) ||
+          j.clips.some((c) => !c.rendered) ||
+          j.clips.some((c) => c.variants.some((v) => v.status === "pending" || v.status === "rendering")),
+      );
       const delay = anyActive ? 2000 : 8000;
       timer.current = setTimeout(tick, delay);
     };

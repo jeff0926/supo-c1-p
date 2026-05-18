@@ -14,11 +14,13 @@ from app.schemas import (
     BatchRenderRequest,
     BatchRenderResponse,
     ClipOut,
+    ClipTrimRequest,
     TemplateInfo,
     VariantOut,
+    WordTimestamp,
 )
 from app.services.publishing import TemplateEngine
-from app.workers.tasks import render_variants_task
+from app.workers.tasks import render_variants_task, rerender_clip_task
 
 router = APIRouter(tags=["clips"])
 
@@ -34,16 +36,55 @@ def _variant_to_out(variant: Variant) -> VariantOut:
     return out
 
 
+def _hydrate_clip(clip: Clip) -> ClipOut:
+    out = ClipOut.model_validate(clip)
+    if clip.rendered and clip.output_path:
+        out.output_url = f"/api/clips/{clip.id}/download"
+    out.variants = [_variant_to_out(v) for v in clip.variants]
+    transcript_path = clip.job.transcript_path
+    if transcript_path and Path(transcript_path).exists():
+        try:
+            data = json.loads(Path(transcript_path).read_text(encoding="utf-8"))
+            out.words = [
+                WordTimestamp(**w)
+                for w in data.get("words", [])
+                if w.get("end", 0) > clip.start_time and w.get("start", 0) < clip.end_time
+            ]
+        except (OSError, json.JSONDecodeError):
+            out.words = []
+    return out
+
+
 @clips_router.get("/{clip_id}", response_model=ClipOut)
 def get_clip(clip_id: int, db: Session = Depends(get_db)) -> ClipOut:
     clip = db.get(Clip, clip_id)
     if clip is None:
         raise HTTPException(404, "Clip not found")
-    out = ClipOut.model_validate(clip)
-    if clip.rendered and clip.output_path:
-        out.output_url = f"/api/clips/{clip.id}/download"
-    out.variants = [_variant_to_out(v) for v in clip.variants]
-    return out
+    return _hydrate_clip(clip)
+
+
+@clips_router.post("/{clip_id}/trim", response_model=ClipOut)
+def trim_clip(
+    clip_id: int,
+    payload: ClipTrimRequest,
+    db: Session = Depends(get_db),
+) -> ClipOut:
+    """Update a clip's time range and trigger a background re-render."""
+    clip = db.get(Clip, clip_id)
+    if clip is None:
+        raise HTTPException(404, "Clip not found")
+    if payload.end_time <= payload.start_time:
+        raise HTTPException(400, "end_time must be greater than start_time")
+
+    clip.start_time = payload.start_time
+    clip.end_time = payload.end_time
+    clip.rendered = False
+    clip.output_path = None
+    db.commit()
+    db.refresh(clip)
+
+    rerender_clip_task.delay(clip.id)
+    return _hydrate_clip(clip)
 
 
 @clips_router.get("/{clip_id}/download")

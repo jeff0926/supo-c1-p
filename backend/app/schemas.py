@@ -83,7 +83,13 @@ class ClipOut(BaseModel):
     reasoning: str
     rendered: bool
     output_url: str | None = None
+    words: list[WordTimestamp] = []
     variants: list[VariantOut] = []
+
+
+class ClipTrimRequest(BaseModel):
+    start_time: float = Field(ge=0)
+    end_time: float = Field(gt=0)
 
 
 class JobOut(BaseModel):
@@ -96,4 +102,5 @@ class JobOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     has_transcript: bool = False
+    source_url: str | None = None
     clips: list[ClipOut] = []

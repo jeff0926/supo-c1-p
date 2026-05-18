@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -72,3 +73,22 @@ async def upload_video(
 def list_videos(db: Session = Depends(get_db)) -> list[VideoOut]:
     videos = db.query(Video).order_by(Video.created_at.desc()).all()
     return [VideoOut.model_validate(v) for v in videos]
+
+
+@router.get("/{video_id}/source")
+def stream_source(video_id: int, db: Session = Depends(get_db)) -> FileResponse:
+    video = db.get(Video, video_id)
+    if video is None:
+        raise HTTPException(404, "Video not found")
+    path = Path(video.source_path)
+    if not path.exists():
+        raise HTTPException(404, "Source file missing on disk")
+    suffix = path.suffix.lower()
+    media_type = {
+        ".mp4": "video/mp4",
+        ".m4v": "video/mp4",
+        ".mov": "video/quicktime",
+        ".mkv": "video/x-matroska",
+        ".webm": "video/webm",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(path, media_type=media_type, filename=video.filename)
